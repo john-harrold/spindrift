@@ -80,15 +80,50 @@ struct PDFCanvasView: NSViewRepresentable {
     func updateNSView(_ pdfView: SpindriftPDFView, context: Context) {
         if pdfView.document !== pdfDocument {
             pdfView.document = pdfDocument
-            context.coordinator.hasSetInitialZoom = false
+            context.coordinator.lastFitToWidthRequest = 0
         }
         context.coordinator.viewModel = viewModel
 
-        // Set initial zoom on first layout
-        if !context.coordinator.hasSetInitialZoom,
-           pdfView.bounds.width > 0 {
-            pdfView.scaleFactor = viewModel.zoomLevel
-            context.coordinator.hasSetInitialZoom = true
+        // Apply fit-to-width whenever the request version changes and bounds are ready.
+        let fitRequest = viewModel.fitToWidthRequest
+        if fitRequest != context.coordinator.lastFitToWidthRequest,
+           pdfView.bounds.width > 0,
+           let firstPage = pdfDocument.page(at: 0) {
+            let pageWidth = firstPage.bounds(for: .mediaBox).width
+            if pageWidth > 0 {
+                // Leave a small margin so the page doesn't touch the scrollbar.
+                let availableWidth = pdfView.bounds.width - 16
+                let scale = max(0.1, min(5.0, availableWidth / pageWidth))
+                pdfView.scaleFactor = scale
+                let viewModelRef = viewModel
+                DispatchQueue.main.async {
+                    viewModelRef.zoomLevel = scale
+                }
+            }
+            context.coordinator.lastFitToWidthRequest = fitRequest
+            context.coordinator.lastZoomRevision = viewModel.zoomSetByUI
+        }
+
+        // Apply fit-whole-page whenever the request version changes and bounds are ready.
+        let fitPageRequest = viewModel.fitToPageRequest
+        if fitPageRequest != context.coordinator.lastFitToPageRequest,
+           pdfView.bounds.width > 0,
+           pdfView.bounds.height > 0,
+           let currentPage = pdfView.currentPage ?? pdfDocument.page(at: 0) {
+            let pageBounds = currentPage.bounds(for: .mediaBox)
+            if pageBounds.width > 0, pageBounds.height > 0 {
+                let availableWidth = pdfView.bounds.width - 16
+                let availableHeight = pdfView.bounds.height - 16
+                let widthScale = availableWidth / pageBounds.width
+                let heightScale = availableHeight / pageBounds.height
+                let scale = max(0.1, min(5.0, min(widthScale, heightScale)))
+                pdfView.scaleFactor = scale
+                let viewModelRef = viewModel
+                DispatchQueue.main.async {
+                    viewModelRef.zoomLevel = scale
+                }
+            }
+            context.coordinator.lastFitToPageRequest = fitPageRequest
             context.coordinator.lastZoomRevision = viewModel.zoomSetByUI
         }
 

@@ -24,8 +24,10 @@ class PDFCanvasCoordinator: NSObject, PDFViewDelegate {
     /// Last annotation revision that was synced, to avoid redundant sync work.
     private var lastSyncedRevision: Int = -1
 
-    /// Whether the initial zoom-to-width has been applied.
-    var hasSetInitialZoom = false
+    /// Last fit-to-width request version that was applied.
+    var lastFitToWidthRequest = 0
+    /// Last fit-whole-page request version that was applied.
+    var lastFitToPageRequest = 0
     var lastSearchHighlightRevision = 0
     var lastZoomRevision = 0
 

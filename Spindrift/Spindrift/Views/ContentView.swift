@@ -20,6 +20,7 @@ struct ContentView: View {
     @State private var showRightSidebar = true
     @State private var sidebarWidth: CGFloat = 180
     @State private var zoomText = "100%"
+    @State private var hasSizedWindow = false
     @FocusState private var isSearchFieldFocused: Bool
     @Environment(\.undoManager) private var undoManager
 
@@ -62,6 +63,9 @@ struct ContentView: View {
                 }
             }
             .navigationTitle(navigationTitle)
+            .background(WindowAccessor { window in
+                sizeWindowToDocumentIfNeeded(window: window)
+            })
             .onAppear {
                 viewModel.document = document
                 viewModel.sidecar = document.sidecar
@@ -136,6 +140,61 @@ struct ContentView: View {
 
     private var toolHintText: String? {
         nil
+    }
+
+    // MARK: - Window Sizing
+
+    private func sizeWindowToDocumentIfNeeded(window: NSWindow) {
+        guard !hasSizedWindow,
+              let firstPage = document.pdfDocument.page(at: 0),
+              let screen = window.screen ?? NSScreen.main else { return }
+
+        let pageBounds = firstPage.bounds(for: .mediaBox)
+        guard pageBounds.width > 0, pageBounds.height > 0 else { return }
+
+        hasSizedWindow = true
+
+        let pageAspect = pageBounds.width / pageBounds.height
+        let isPortrait = pageAspect < 1
+
+        let visibleFrame = screen.visibleFrame
+        let maxWidth = visibleFrame.width * 0.95
+        let maxHeight = visibleFrame.height * 0.95
+
+        // Approximate chrome around the PDF canvas — sidebars, toolbars, title bar.
+        let leftChrome: CGFloat = showLeftSidebar ? (sidebarWidth + 6) : 0
+        let rightChrome: CGFloat = showRightSidebar ? 260 : 0
+        let verticalChrome: CGFloat = 28 + 38 + 36  // title bar + main toolbar + sub-toolbar
+        let horizontalChrome = leftChrome + rightChrome
+
+        let targetWidth: CGFloat
+        let targetHeight: CGFloat
+
+        if isPortrait {
+            // Portrait: take the screen's height, scale width to match document aspect.
+            targetHeight = maxHeight
+            let pdfAreaHeight = max(100, targetHeight - verticalChrome)
+            let pdfAreaWidth = pdfAreaHeight * pageAspect
+            targetWidth = min(maxWidth, pdfAreaWidth + horizontalChrome)
+        } else {
+            // Landscape: take the screen's width, scale height to match document aspect.
+            targetWidth = maxWidth
+            let pdfAreaWidth = max(100, targetWidth - horizontalChrome)
+            let pdfAreaHeight = pdfAreaWidth / pageAspect
+            targetHeight = min(maxHeight, pdfAreaHeight + verticalChrome)
+        }
+
+        var frame = window.frame
+        frame.size = NSSize(width: targetWidth, height: targetHeight)
+        frame.origin.x = visibleFrame.minX + (visibleFrame.width - targetWidth) / 2
+        frame.origin.y = visibleFrame.minY + (visibleFrame.height - targetHeight) / 2
+        window.setFrame(frame, display: true, animate: false)
+
+        // Re-run fit-to-width once the new bounds settle.
+        let vm = viewModel
+        DispatchQueue.main.async {
+            vm.fitToWidthRequest += 1
+        }
     }
 
     // MARK: - Select Mode Toolbar
@@ -341,6 +400,14 @@ struct ContentView: View {
             }
             .buttonStyle(.bordered)
             .help("Reset zoom to 100%")
+
+            Button {
+                viewModel.fitToPageRequest += 1
+            } label: {
+                Image(systemName: "rectangle.arrowtriangle.2.inward")
+            }
+            .buttonStyle(.bordered)
+            .help("Fit page to window")
 
             Divider()
                 .frame(height: 20)
@@ -1133,5 +1200,29 @@ private struct OCRAndExportSheets: ViewModifier {
             } message: {
                 Text(viewModel.tableExportError ?? "")
             }
+    }
+}
+
+// MARK: - Window Accessor
+
+private struct WindowAccessor: NSViewRepresentable {
+    let onWindow: (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            if let window = view.window {
+                onWindow(window)
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            if let window = nsView.window {
+                onWindow(window)
+            }
+        }
     }
 }
